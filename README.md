@@ -1,6 +1,6 @@
 # ts-plugin-svelte
 
-Don't actually use this yet, it's just a proof of concept for now
+Don't actually use this yet, it's just a proof of concept for now. Everything breaks past the 5 seconds demo 😁
 
 ## Get Started
 
