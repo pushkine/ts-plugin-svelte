@@ -1,6 +1,7 @@
 {
-	"name": "svelte-ts-plugin",
+	"name": "ts-plugin-svelte",
 	"author": "@pushkine",
+	"license": "MIT",
 	"devDependencies": {
 		"@types/node": "^14.14.27",
 		"esbuild": "^0.8.46",
