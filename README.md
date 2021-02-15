@@ -19,3 +19,9 @@ You can see TS Server logs by using the `Typescript: Open TS Server Logs` comman
 If you're going to play with this I recommend installing the "TS Server Debug" extension, it adds a command that restarts the TS server with debugging enabled, then run the `Debug: Attach to Node process` command and type in the port the extension gave you
 
 Note that you cannot use a dev branch of typescript with linked modules, so once in a typescript file make sure to click at the version number at the right of "Typescript" on the bottom right > Select Typescript Version > Use Workspace version
+
+## Todo
+
+* Fix the assertion errors in console
+
+* Renaming a variable inside a ts file will rename the svelte file based on svelte2tsx positions, I was thinking about interceipting refactoring changes to svelte files and instead append them to the file in the form of a command so that the svelte plugin can in turn parse it and execute the refactoring properly
