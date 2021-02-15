@@ -1,6 +1,8 @@
 # ts-plugin-svelte
 
-Don't actually use this yet, it's just a proof of concept for now. Everything breaks past the 5 seconds demo 😁
+Don't actually use this yet, it's just a proof of concept for now. Everything breaks 5 seconds in 😁
+
+This solution is based on https://github.com/mrmckeb/typescript-plugin-css-modules
 
 ## Get Started
 
