@@ -1,0 +1,15 @@
+{
+	"name": "temp-svelte-ts-plugin",
+	"devDependencies": {
+		"@types/node": "^14.14.27",
+		"esbuild": "^0.8.46",
+		"sucrase": "^3.17.1",
+		"typescript": "^4.1.5"
+	},
+	"scripts": {
+		"build": "esbuild index.ts --bundle --platform=node --target=es2020 --external:svelte2tsx --outfile=index.js"
+	},
+	"dependencies": {
+		"svelte-language-server": "^0.12.9"
+	}
+}
