@@ -299,6 +299,16 @@ export const tsInternals = new (class {
 			plugins.push(plugin);
 		}
 	}
+	private patchCompilerOptions(context: TSPluginContext, lang: LanguageConfig) {
+		const { ts } = context;
+		switch (lang.scriptKind) {
+			case ts.ScriptKind.JSX:
+			case ts.ScriptKind.TSX: {
+				const compilerOptions = context.project.getCompilerOptions();
+				if (!compilerOptions.jsx) compilerOptions.jsx = ts.JsxEmit.Preserve;
+			}
+		}
+	}
 	private getFailedLookupLocations(context: TSPluginContext, moduleName: string, containingFile: string): string[] {
 		const r = context.project.getResolvedModuleWithFailedLookupLocationsFromCache!(moduleName, containingFile);
 		// @ts-expect-error
@@ -362,6 +372,7 @@ export const tsInternals = new (class {
 			this.resolveLanguageModules(context, lang);
 			this.resolveLanguageRootFiles(context, lang);
 			this.disableLanguageFeatures(context, lang);
+			this.patchCompilerOptions(context, lang);
 			this.forEachLanguageFile(context, lang, (info) => {
 				this.rewriteFileScriptKind(context, lang, info);
 				this.rewriteFileContent(context, lang, info);
