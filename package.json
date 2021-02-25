@@ -1,20 +1,23 @@
 {
 	"name": "ts-plugin-svelte",
+	"version": "0.0.1",
 	"author": "@pushkine",
 	"license": "MIT",
-	"devDependencies": {
-		"@types/node": "^14.14.27",
-		"esbuild": "^0.8.46",
-		"magic-string": "^0.25.7",
-		"sucrase": "^3.17.1",
-		"typescript": "^4.1.5"
+	"engines": {
+		"vscode": "^1.53.0"
 	},
 	"scripts": {
-		"build": "esbuild src/index.ts --bundle --platform=node --target=es2020 --external:svelte2tsx --outfile=index.js",
+		"build": "esbuild src/index.ts --bundle --platform=node --target=es2020 --external:svelte2tsx --external:sourcemap-codec --outfile=index.js",
 		"watch": "npm run build -- --watch"
+	},
+	"devDependencies": {
+		"@types/node": "^14.14.31",
+		"esbuild": "^0.8.46",
+		"mocha": "^8.3.0",
+		"typescript": "^4.1.5"
 	},
 	"dependencies": {
 		"sourcemap-codec": "^1.4.8",
-		"svelte-language-server": "^0.12.9"
+		"svelte2tsx": "^0.1.174"
 	}
 }

@@ -1,0 +1,41 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "install plugin",
+			"command": "yarn",
+			"args": ["install"]
+		},
+		{
+			"type": "shell",
+			"label": "install example extension",
+			"command": "yarn",
+			"args": ["install"],
+			"options": {
+				"cwd": "${workspaceFolder}/example"
+			}
+		},
+		{
+			"type": "npm",
+			"label": "build plugin",
+			"script": "build"
+		},
+		{
+			"type": "npm",
+			"label": "build example extension",
+			"script": "build",
+			"options": {
+				"cwd": "${workspaceFolder}/example"
+			}
+		},
+		{
+			"label": "Build",
+			"dependsOn": ["install plugin", "install example extension", "build plugin", "build example extension"],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		}
+	]
+}

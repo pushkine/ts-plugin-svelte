@@ -1,8 +1,6 @@
 {
   "typescript.tsdk": "node_modules\\typescript\\lib",
   "files.exclude": {
-    "yarn.lock": true,
-    "node_modules": true,
-    ".vscode": true
-  }
+    "yarn.lock": true
+  },
 }
