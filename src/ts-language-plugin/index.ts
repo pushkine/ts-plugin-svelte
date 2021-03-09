@@ -45,11 +45,18 @@ export function createLanguagePlugin(options: TSLanguagePlugin | TSLanguagePlugi
 				extensionKind,
 				transform: options.transform,
 				disabled: [
-					"getApplicableRefactors",
+					/** diagnostics */
 					"getSemanticDiagnostics",
 					"getSyntacticDiagnostics",
 					"getSuggestionDiagnostics",
+					/** refactors */
+					"getApplicableRefactors",
+					/** info */
 					"getQuickInfoAtPosition",
+					/**
+					 * This uses ScriptVersionCache.getAbsolutePositionAndLineText
+					 * which is not supported here
+					 */
 					"getFormattingEditsAfterKeystroke",
 					"getCodeFixesAtPosition",
 				],

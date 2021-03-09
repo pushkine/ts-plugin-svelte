@@ -2,19 +2,8 @@ import type ts from "typescript/lib/tsserverlibrary";
 
 declare namespace tsInternalHelpers {
 	export function pathIsRelative(path: string): boolean;
-	export function normalizeSlashes(path: string): string;
-	export function normalizePath(path: string): string;
 	export function getDirectoryPath(path: string): string;
 	export function resolvePath(path: string, ...paths: (string | undefined)[]): string;
-	export function computeLineStarts(text: string): number[];
-	export function computeLineAndCharacterOfPosition(lineStarts: readonly number[], position: number): ts.LineAndCharacter;
-	export function computePositionOfLineAndCharacter(
-		lineStarts: readonly number[],
-		line: number,
-		character: number,
-		debugText?: string,
-		allowEdits?: true,
-	): number;
 }
 // @ts-expect-error
 interface tsInternalProjectService extends ts.server.ProjectService {

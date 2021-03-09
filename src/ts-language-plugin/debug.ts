@@ -1,5 +1,5 @@
 import { TSPluginContext } from ".";
-import { addSideEffects, override, quote, toLineChar } from "./utils";
+import { addSideEffects, computeLineStarts, override, positionToLineChar, quote, toLineChar } from "./utils";
 export const debug = new (class Debug {
 	constructor() {
 		this.log("### PLUGIN SCRIPT EVALUATED ###");
@@ -15,12 +15,7 @@ export const debug = new (class Debug {
 		throw new Error(`${this.pluginName} Error: ${str}`);
 	}
 	private logger: ts.server.Logger = { info: console.log } as any;
-	private allow_regexp = [
-		/^Project \'.*?\' \(Configured\)$/,
-		/^\tFiles ([0-9]+)\n\t/,
-		/^Different program with same set of files:: structureIsReused:: [0-9]+$/,
-		// /^Config: .*? : {\n \"rootNames\"/,
-	];
+
 	private custom_regexp: [RegExp, (str: string) => string | null][] = [
 		[
 			/^Config: .*? : {\n \"rootNames\"/,
@@ -41,15 +36,18 @@ export const debug = new (class Debug {
 				const obj: { event: string; body: any } = JSON.parse(str.slice("event:\n    ".length));
 				let text = "";
 				x: {
-					if (["syntaxDiag", "semanticDiag", "suggestionDiag"].includes(obj.event)) {
-						const body = obj.body as { file: string; diagnostics: ts.DiagnosticWithLocation[] };
-						if (body.diagnostics.length === 0) {
-							text = ` | "${this.projectPath(body.file)}" -> (no results)`;
-							break x;
-						}
+					switch (obj.event) {
+						case "syntaxDiag":
+						case "semanticDiag":
+						case "suggestionDiag":
+							const body = obj.body as { file: string; diagnostics: ts.DiagnosticWithLocation[] };
+							if (body.diagnostics.length === 0) {
+								text = ` | "${this.projectPath(body.file)}" -> (no results)`;
+								break x;
+							}
 					}
 					text = "\n" + JSON.stringify(obj.body, void 0, "\t");
-					if (text.length < 150) text = `-> ${JSON.stringify(obj.body)}`;
+					if (text.length < 150) text = ` -> ${JSON.stringify(obj.body)}`;
 				}
 				return `Event | "${obj.event}"` + text;
 			},
@@ -60,9 +58,9 @@ export const debug = new (class Debug {
 				const obj: { command: string; arguments: any; seq: number } = JSON.parse(str.slice("request:\n    ".length));
 				let text = "";
 				if (!obj.arguments) {
-					text = "| (no arguments)";
+					text = ` | (no arguments)`;
 				} else {
-					text = "\n" + JSON.stringify(obj.arguments, void 0, "\t");
+					text = "\n" + pretty_language_object(obj.arguments);
 					if (text.length < 150 || text.length > 1000) {
 						text = ` -> ${JSON.stringify(obj.arguments)}`;
 					}
@@ -83,18 +81,10 @@ export const debug = new (class Debug {
 				} else if (obj.command === "getSupportedCodeFixes") {
 					text = " -> number[]";
 				} else {
-					text =
-						"\n" +
-						JSON.stringify(
-							obj.body,
-							function (key, value) {
-								if (key === "file") return debug.projectPath(value);
-								if (key === "start" || key === "end" || key === "contextStart" || key === "contextEnd")
-									return JSON.stringify(value);
-								return value;
-							},
-							"\t",
-						).replace(/"{\\"line\\":([0-9]+),\\"offset\\":([0-9]+)}"/g, `{ "line":$1, "offset": $2}`);
+					text = "\n" + pretty_language_object(obj);
+					if (text.length > 1000) {
+						text = ` -> ${JSON.stringify(obj)}`;
+					}
 				}
 				return `Response ${obj.request_seq} | "${obj.command}"` + text + `\n${"-".repeat(30)}`;
 			},
@@ -106,6 +96,12 @@ export const debug = new (class Debug {
 				return `Reloading configurated project at "${path}"`;
 			},
 		],
+	];
+	private allow_regexp = [
+		/^Project \'.*?\' \(Configured\)$/,
+		/^\tFiles ([0-9]+)\n\t/,
+		/^Different program with same set of files:: structureIsReused:: [0-9]+$/,
+		// /^Config: .*? : {\n \"rootNames\"/,
 	];
 	private suppress_regexp = [
 		// project
@@ -119,7 +115,9 @@ export const debug = new (class Debug {
 		/^Plugin validation succeded$/,
 		// watcher
 		/FileWatcher:: Added:: WatchInfo:/,
+		/FileWatcher:: Close:: WatchInfo:/,
 		/DirectoryWatcher:: Added:: WatchInfo:/,
+		/DirectoryWatcher:: Close:: WatchInfo: /,
 		/^watchDirectory for .*? uses cached drive information\.$/,
 		// graph
 		/^Starting updateGraphWorker: Project: /,
@@ -312,7 +310,7 @@ export const debug = new (class Debug {
 			}
 			this.log(`Mapping position mismatch\n` + mark(left) + mark(right));
 			debugger;
-			this.throw(`Mapping position mismatch`);
+			// this.throw(`Mapping position mismatch`);
 		}
 	}
 	trace(str: any) {
@@ -332,10 +330,25 @@ interface MappedType {
 	lineNumber: number;
 	index: number;
 }
+function pretty_language_object(obj: { command: string; success: boolean; body: any; request_seq: number }) {
+	return (
+		JSON.stringify(
+			obj.body,
+			function (key, value) {
+				if (key === "file" || key === "fileName") return debug.projectPath(value);
+				if (key === "start" || key === "end" || key === "contextStart" || key === "contextEnd")
+					return JSON.stringify(value);
+				return value;
+			},
+			"\t",
+		) ?? ""
+	).replace(/"{\\"line\\":([0-9]+),\\"offset\\":([0-9]+)}"/g, `{ "line":$1, "offset": $2}`);
+}
+
 function parseMapping(context: TSPluginContext, m: ComparaisonMap): MappedType {
-	let { text, position, lineStarts = context.ts.computeLineStarts(m.text) } = m;
+	let { text, position, lineStarts = computeLineStarts(m.text) } = m;
 	if (typeof position === "number") {
-		position = context.ts.computeLineAndCharacterOfPosition(lineStarts, position);
+		position = positionToLineChar(lineStarts, position);
 	} else if ("offset" in position) {
 		position = toLineChar(position);
 	}

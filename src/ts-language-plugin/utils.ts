@@ -67,9 +67,62 @@ export function toPosition(lineStarts: number[], o: LineChar | LineOffset) {
 export function toLineChar(pos: LineOffset): LineChar {
 	return { line: pos.line - 1, character: pos.offset - 1 };
 }
+export function positionToLineChar(lineStarts: number[], position: number): LineChar {
+	const line = binarySearch(lineStarts, position);
+	return { line, character: position - lineStarts[line] };
+}
 export function toLineOffset(pos: LineChar): LineOffset {
 	return { line: pos.line + 1, offset: pos.character + 1 };
 }
 export function extensionFromFileName(fileName: string) {
 	return fileName.slice(fileName.lastIndexOf(".") + 1);
+}
+const enum CharCode {
+    /** RegExp/ECMAScript/Typescript Line terminator characters */
+    LineFeed = 0x0a, // "\n" <LF>
+    CarriageReturn = 0x0d, // "\r" <CR>
+    LineSeparator = 0x2028, // System specific <LS>
+    ParagraphSeparator = 0x2029 // 8232 (PS)
+}
+export function computeLineStarts(text: string) {
+    const result: number[] = [0];
+    let lineStart = 0;
+    let pos = 0;
+    let i = 0;
+    while (pos < text.length)
+        switch (text.charCodeAt(pos++)) {
+            case CharCode.CarriageReturn:
+                if (text.charCodeAt(pos) === CharCode.LineFeed) pos++;
+            case CharCode.LineFeed:
+            case CharCode.LineSeparator:
+            case CharCode.ParagraphSeparator:
+                result[i++] = lineStart;
+                lineStart = pos;
+        }
+    result[i] = pos;
+    return result;
+}
+export function binaryInsert(array: number[], value: number): void;
+export function binaryInsert<T extends Record<any, number> | number[]>(array: T[], value: T, key: keyof T): void;
+export function binaryInsert<A extends Record<any, number>[] | number[]>(array: A, value: A[any], key?: keyof (A[any] & object)) {
+	if (0 === key) key = "0" as keyof A[any];
+	const index = 1 + binarySearch(array, (key ? value[key] : value) as number, key);
+	let i = array.length;
+	while (index !== i--) array[1 + i] = array[i];
+	array[index] = value;
+}
+export function binarySearch<T extends object | number>(array: T[], target: number, key?: keyof (T & object)) {
+	if (!array || 0 === array.length) return -1;
+	if (0 === key) key = "0" as keyof T;
+	let low = 0;
+	let high = array.length - 1;
+	while (low <= high) {
+		const i = low + ((high - low) >> 1);
+		const item = undefined === key ? array[i] : array[i][key];
+		if (item === target) return i;
+		if (item < target) low = i + 1;
+		else high = i - 1;
+	}
+	if ((low = ~low) < 0) low = ~low - 1;
+	return low;
 }

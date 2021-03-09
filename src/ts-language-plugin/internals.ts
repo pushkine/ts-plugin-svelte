@@ -5,6 +5,7 @@ import { SourceMapConsumer } from "./sourcemaps";
 import { LineChar, tsInternalServerHelpers } from "./types";
 import {
 	addSideEffects,
+	computeLineStarts,
 	extensionFromFileName,
 	getExtensionFromScriptKind,
 	getText,
@@ -12,7 +13,7 @@ import {
 	quote,
 	toLineChar,
 	toLineOffset,
-	toPosition
+	toPosition,
 } from "./utils";
 
 interface LanguageConfig {
@@ -33,34 +34,8 @@ interface TextStorageMapper {
 	originalText: string;
 	generatedText: string;
 }
-interface ScriptVersionCacheEventListener {
-	create(): void;
-	delete(): void;
-	update(): void;
-}
 const voidPosition = (): LineChar => ({ line: -1, character: -1 });
 export const tsInternals = new (class {
-	private addCacheEventListener(textStorage: tsInternalServerHelpers.TextStorage, host: ScriptVersionCacheEventListener) {
-		let svc = textStorage.svc;
-		if (svc) host.create();
-		addSideEffects(textStorage, {
-			useText() {
-				svc = undefined;
-				host.delete();
-			},
-			switchToScriptVersionCache(current_svc) {
-				if (svc === current_svc) return;
-				else svc = current_svc;
-				host.create();
-				addSideEffects(svc, {
-					_getSnapshot: (r) => {
-						const a = getText(r);
-						host.update();
-					},
-				});
-			},
-		});
-	}
 	private scriptInfoToMapper = new WeakMap<ts.server.ScriptInfo, TextStorageMapper>();
 	private getMapper(context: TSPluginContext, lang: LanguageConfig, scriptInfo: ts.server.ScriptInfo): TextStorageMapper {
 		if (!this.scriptInfoToMapper.has(scriptInfo)) {
@@ -71,8 +46,20 @@ export const tsInternals = new (class {
 				generatedLineStarts: [0],
 				setOriginalText(text) {
 					if ("" === this.originalText && "" === text) return; // init blank calls
-					const { ts } = context;
-					const host = lang.transform(scriptInfo.fileName, text);
+					let res: LanguageFileMapper | TransformedLanguageFile;
+					try {
+						res = lang.transform(scriptInfo.fileName, text);
+					} catch (e) {
+						debug.log("Ignored setOriginalText");
+						this.originalText = text;
+						this.generatedText = "";
+						this.originalLineStarts = computeLineStarts(text);
+						this.generatedLineStarts = [0];
+						this.getOriginalPosition = voidPosition;
+						this.getGeneratedPosition = voidPosition;
+						return;
+					}
+					const host = res;
 					if ("mappings" in host) {
 						const mapper = new SourceMapConsumer(host.mappings);
 						this.generatedText = host.content;
@@ -84,8 +71,8 @@ export const tsInternals = new (class {
 						this.getGeneratedPosition = host.getGeneratedPosition.bind(host);
 					}
 					this.originalText = text;
-					this.originalLineStarts = (host as any).originalLineStarts ?? ts.computeLineStarts(this.originalText);
-					this.generatedLineStarts = (host as any).generatedlineStarts ?? ts.computeLineStarts(this.generatedText);
+					this.originalLineStarts = (host as any).originalLineStarts ?? computeLineStarts(this.originalText);
+					this.generatedLineStarts = (host as any).generatedlineStarts ?? computeLineStarts(this.generatedText);
 				},
 				getOriginalPosition: voidPosition,
 				getGeneratedPosition: voidPosition,
@@ -93,94 +80,71 @@ export const tsInternals = new (class {
 		}
 		return this.scriptInfoToMapper.get(scriptInfo);
 	}
+	private CURRENT_COMMAND: ts.server.protocol.CommandTypes;
+	private listenCommands(context: TSPluginContext) {
+		const { ts } = context;
+		const { executeCommand } = ts.server.Session.prototype;
+		const self = this;
+		ts.server.Session.prototype.executeCommand = function (request) {
+			const prev = self.CURRENT_COMMAND;
+			self.CURRENT_COMMAND = request.command as ts.server.protocol.CommandTypes;
+			const r = executeCommand.call(this, request);
+			self.CURRENT_COMMAND = prev;
+			return r;
+		};
+	}
 	private rewriteFileContent(context: TSPluginContext, lang: LanguageConfig, scriptInfo: ts.server.ScriptInfo) {
 		const host = this.getMapper(context, lang, scriptInfo);
 		const textStorage = this.getTextStorage(scriptInfo);
 		const { ScriptVersionCache } = context.ts.server;
-		const { ts } = context;
 		let original_text_svc: tsInternalServerHelpers.ScriptVersionCache;
 		override(textStorage, {
 			reload(_, text) {
 				host.setOriginalText(text);
+				original_text_svc = ScriptVersionCache.fromString(text);
 				return _(host.generatedText);
 			},
 			edit(_, start, end, newText) {
-				const s = host.getOriginalPosition(ts.computeLineAndCharacterOfPosition(host.generatedLineStarts, start));
-				const e = host.getOriginalPosition(ts.computeLineAndCharacterOfPosition(host.generatedLineStarts, end - 1));
-				const start2 = host.originalLineStarts[s.line] + s.character;
-				const end2 = host.originalLineStarts[e.line] + e.character + 1;
-				_(start, end, newText);
-				original_text_svc.edit(start2, end2 - start2, newText);
+				original_text_svc.edit(start, end - start, newText);
+				debug.log(`Edited "${host.originalText.slice(start, end)}" to "${newText}"`);
+				_(0, 0, "");
+				schedule_reload();
 			},
 		});
-		this.addCacheEventListener(textStorage, {
-			create() {
-				const text = host.originalText;
-				original_text_svc = ScriptVersionCache.fromString(text);
-			},
-			delete() {
-				original_text_svc = undefined;
-			},
-			update() {
-				const snapshot = original_text_svc._getSnapshot();
-				const text = getText(snapshot);
-				debug.logFileContent(
-					this,
-					`Updated the cached version of the original file "${debug.projectPath(scriptInfo.fileName)}"`,
-					extensionFromFileName(scriptInfo.fileName),
-					text,
-				);
-				host.setOriginalText(text);
-			},
-		});
+		let scheduled = false;
+		function schedule_reload() {
+			if (!scheduled) {
+				scheduled = true;
+				queueMicrotask(() => {
+					scheduled = false;
+					const text = getText(original_text_svc._getSnapshot());
+					debug.logFileContent(
+						original_text_svc,
+						`Updated the cached version of the original file at "${debug.projectPath(scriptInfo.fileName)}"`,
+						extensionFromFileName(scriptInfo.fileName),
+						text,
+					);
+					textStorage.reload(text);
+				});
+			}
+		}
 		if (textStorage.text || textStorage.svc) {
 			textStorage.reload(getText(textStorage.getSnapshot()));
 		}
 	}
-	private isRangeEndState(host: TextStorageMapper) {
-		let probablyRangeEnd = false;
-		let prev = -1;
-		return (position: number) => {
-			if (-1 === prev) {
-				queueMicrotask(() => {
-					if (probablyRangeEnd) {
-						debug.log(`Info: Previous task did not map a range`);
-						probablyRangeEnd = false;
-					}
-					prev = -1;
-				});
-			} else if (probablyRangeEnd) {
-				if (position < prev) {
-					probablyRangeEnd = false;
-					debug.log(`RangeEnd false positive`);
-				} else {
-				}
-			}
-			prev = position;
-			return !(probablyRangeEnd = !probablyRangeEnd);
-		};
-	}
 	private rewriteFileMapping(context: TSPluginContext, lang: LanguageConfig, scriptInfo: ts.server.ScriptInfo) {
 		const host = this.getMapper(context, lang, scriptInfo);
 		const textStorage = this.getTextStorage(scriptInfo);
-		const getIsRangeEnd1 = this.isRangeEndState(host);
-		const getIsRangeEnd2 = this.isRangeEndState(host);
+		const self = this;
+		const { CommandTypes } = context.ts.server.protocol;
 		override(textStorage, {
 			// original -> generated
 			lineOffsetToPosition(_, lineOffset_line, lineOffset_offset) {
 				const position_in_original = toLineChar({ line: lineOffset_line, offset: lineOffset_offset });
 				const { originalLineStarts, generatedLineStarts } = host;
 				const original = toPosition(originalLineStarts, position_in_original);
-				const isRangeEnd = getIsRangeEnd1(original);
-				if (isRangeEnd && position_in_original.character !== 0) {
-					const position_in_generated = host.getGeneratedPosition({
-						line: position_in_original.line,
-						character: position_in_original.character - 1,
-					});
-					const generated = toPosition(generatedLineStarts, position_in_generated) + 1;
-					debug.log(`Patched Range end (mapped as ${lineOffset_offset - 1} +1)`);
-					return generated;
-				} else {
+				if (self.CURRENT_COMMAND === CommandTypes.UpdateOpen) return original;
+				else {
 					const position_in_generated = host.getGeneratedPosition(position_in_original);
 					const generated = toPosition(generatedLineStarts, position_in_generated);
 					return generated;
@@ -188,23 +152,14 @@ export const tsInternals = new (class {
 			},
 			// generated -> original
 			positionToLineOffset(_, generated) {
-				const isRangeEnd = getIsRangeEnd2(generated);
-				if (isRangeEnd && generated !== 0) {
-					const position_in_generated = toLineChar(_(generated - 1));
-					const { line, character } = host.getOriginalPosition(position_in_generated);
-					debug.log(`Patched Range end (mapped as ${generated - 1} +1)`);
-					return toLineOffset({ line, character: character + 1 });
-				} else {
-					const position_in_generated = toLineChar(_(generated));
-					const position_in_original = host.getOriginalPosition(position_in_generated);
-					return toLineOffset(position_in_original);
-				}
+				const position_in_generated = toLineChar(_(generated));
+				const position_in_original = host.getOriginalPosition(position_in_generated);
+				return toLineOffset(position_in_original);
 			},
 			// generated
 			lineToTextSpan(_, line) {
-				const lineStarts = host.generatedLineStarts;
-				const start = lineStarts[line];
-				const end = lineStarts[line + 1] ?? host.generatedText.length;
+				const start = host.generatedLineStarts[line];
+				const end = host.generatedLineStarts[line + 1] ?? host.generatedText.length;
 				return { start, length: end - start };
 			},
 		});
@@ -213,15 +168,6 @@ export const tsInternals = new (class {
 		const host = this.getMapper(context, lang, scriptInfo);
 		const textStorage = this.getTextStorage(scriptInfo);
 		addSideEffects(textStorage, {
-			lineOffsetToPosition(position_in_generated, line, offset) {
-				const position_in_original = toLineChar({ line, offset });
-				debug.compareMappings(
-					context,
-					{ text: host.originalText, position: position_in_original },
-					{ text: host.generatedText, position: position_in_generated },
-					true,
-				);
-			},
 			positionToLineOffset(position_in_original, position) {
 				debug.compareMappings(
 					context,
@@ -369,6 +315,7 @@ export const tsInternals = new (class {
 	enableLanguageSupport(context: TSPluginContext, lang: LanguageConfig) {
 		if (!this.TSSupportsLang(context, lang)) {
 			debug.init(context);
+			this.listenCommands(context);
 			this.resolveLanguageModules(context, lang);
 			this.resolveLanguageRootFiles(context, lang);
 			this.disableLanguageFeatures(context, lang);
